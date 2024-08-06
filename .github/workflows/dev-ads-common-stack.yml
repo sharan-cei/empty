@@ -1,0 +1,67 @@
+name: DEV - Common stack (dynamodb)
+on:
+  push:
+    branches: [ development ]
+    paths:
+     - "common/**"
+     - ".github/workflows/dev-ads-common-stack.yml"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  synthDev:
+    uses: Signet-sd/CICD-Templates/.github/workflows/AgnosticCDKSynth.yml@v10
+    with:
+      environment: dev
+      workingDirectory: common/cdk
+      AWSRoleToAssume: arn:aws:iam::481270058004:role/signet-gha-esi-oidc-role
+      installCommand: |
+        aws codeartifact login --tool pip --domain signet-common --domain-owner 354008749183 --repository signet-common-pypi --region us-east-2
+        pip3 install -r requirements.txt
+      synthArgs: -c env=dev
+      outputArtifactUploadName: devBuild
+    secrets:
+      githubToken: ${{ secrets.PULL_REPOSITORY_PAT }}
+      githubArtifactToken: ${{ secrets.SIGNET_SD_PACKAGES_READ }}
+      orcaSecurityApiToken: ${{ secrets.ORCA_SECURITY_API_TOKEN }}
+      orcaProjectKey: ${{ secrets.ORCA_PROJECT_KEY }}
+
+  deployDev:
+      needs: [synthDev]
+      uses: Signet-sd/CICD-Templates/.github/workflows/cdkDeploy.yml@main
+      with:
+        environment: dev
+        nodeVersion: 20
+        deployArgs: -c env=dev
+        AWSRoleToAssume: arn:aws:iam::481270058004:role/signet-gha-esi-oidc-role
+        inputArtifactDownloadName: devBuild
+
+  synthTest:
+    uses: Signet-sd/CICD-Templates/.github/workflows/AgnosticCDKSynth.yml@v10
+    with:
+      environment: test
+      workingDirectory: common/cdk
+      AWSRoleToAssume: arn:aws:iam::611370861527:role/signet-gha-esi-oidc-role
+      installCommand: |
+        aws codeartifact login --tool pip --domain signet-common --domain-owner 354008749183 --repository signet-common-pypi --region us-east-2
+        pip3 install -r requirements.txt
+      synthArgs: -c env=test
+      outputArtifactUploadName: testBuild
+    secrets:
+      githubToken: ${{ secrets.PULL_REPOSITORY_PAT }}
+      githubArtifactToken: ${{ secrets.SIGNET_SD_PACKAGES_READ }}
+      orcaSecurityApiToken: ${{ secrets.ORCA_SECURITY_API_TOKEN }}
+      orcaProjectKey: ${{ secrets.ORCA_PROJECT_KEY }}
+
+  deployTest:
+      needs: [synthTest]
+      uses: Signet-sd/CICD-Templates/.github/workflows/cdkDeploy.yml@main
+      with:
+        environment: test
+        nodeVersion: 20
+        deployArgs: -c env=test
+        AWSRoleToAssume: arn:aws:iam::611370861527:role/signet-gha-esi-oidc-role
+        inputArtifactDownloadName: testBuild

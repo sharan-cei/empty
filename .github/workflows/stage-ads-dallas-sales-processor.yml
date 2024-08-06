@@ -1,0 +1,88 @@
+name: STAGE - ADS Dallas sales processor
+on:
+  push:
+    branches: [ release ]
+    paths:
+     - "ads-dallasSales-processor/**"
+     - ".github/workflows/stage-ads-dallas-sales-processor.yml"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  buildTypescriptApp:
+    uses: Signet-sd/CICD-Templates/.github/workflows/typescriptBuildApp.yml@v10
+    with:
+      environment: stage
+      workingDirectory: ads-dallasSales-processor
+      AWSRoleToAssume: arn:aws:iam::872987878890:role/signet-gha-esi-oidc-role
+      outputArtifactPath: ./ads-dallasSales-processor/dist
+      outputArtifactUploadName: typescriptApp
+      installCommand: |
+        aws codeartifact login --tool npm --repository esi-integration-lib-test --domain signet-esi --domain-owner 872987878890 --region us-east-2
+        npm install
+      buildCommand: 'npm run build --if-present'
+    secrets:
+      npmAuthToken: ${{ secrets.yourToken }}
+
+  synthStage:
+    needs: [buildTypescriptApp]
+    uses: Signet-sd/CICD-Templates/.github/workflows/AgnosticCDKSynth.yml@v10
+    with:
+      environment: stage
+      workingDirectory: ads-dallasSales-processor/cdk
+      AWSRoleToAssume: arn:aws:iam::343261398662:role/signet-gha-esi-oidc-role
+      inputArtifactDownloadName: typescriptApp
+      inputArtifactPath: ads-dallasSales-processor/cdk/dist
+      installCommand: |
+        aws codeartifact login --tool pip --domain signet-common --domain-owner 354008749183 --repository signet-common-pypi --region us-east-2
+        pip3 install -r requirements.txt
+      synthArgs: -c env=stage
+      outputArtifactUploadName: stageBuild
+    secrets:
+      githubToken: ${{ secrets.PULL_REPOSITORY_PAT }}
+      githubArtifactToken: ${{ secrets.SIGNET_SD_PACKAGES_READ }}
+      orcaSecurityApiToken: ${{ secrets.ORCA_SECURITY_API_TOKEN }}
+      orcaProjectKey: ${{ secrets.ORCA_PROJECT_KEY }}
+
+  deployStage:
+      needs: [synthStage]
+      uses: Signet-sd/CICD-Templates/.github/workflows/cdkDeploy.yml@main
+      with:
+        environment: stage
+        nodeVersion: 20
+        deployArgs: -c env=stage
+        AWSRoleToAssume: arn:aws:iam::343261398662:role/signet-gha-esi-oidc-role
+        inputArtifactDownloadName: stageBuild
+
+  synthProd:
+    needs: [buildTypescriptApp]
+    uses: Signet-sd/CICD-Templates/.github/workflows/AgnosticCDKSynth.yml@v10
+    with:
+      environment: prod
+      workingDirectory: ads-dallasSales-processor/cdk
+      AWSRoleToAssume: arn:aws:iam::355920665683:role/signet-gha-esi-oidc-role
+      inputArtifactDownloadName: typescriptApp
+      inputArtifactPath: ads-dallasSales-processor/cdk/dist
+      installCommand: |
+        aws codeartifact login --tool pip --domain signet-common --domain-owner 354008749183 --repository signet-common-pypi --region us-east-2
+        pip3 install -r requirements.txt
+      synthArgs: -c env=prod
+      outputArtifactUploadName: prodBuild
+    secrets:
+      githubToken: ${{ secrets.PULL_REPOSITORY_PAT }}
+      githubArtifactToken: ${{ secrets.SIGNET_SD_PACKAGES_READ }}
+      orcaSecurityApiToken: ${{ secrets.ORCA_SECURITY_API_TOKEN }}
+      orcaProjectKey: ${{ secrets.ORCA_PROJECT_KEY }}
+
+  deployProd:
+      needs: [synthProd]
+      uses: Signet-sd/CICD-Templates/.github/workflows/cdkDeploy.yml@main
+      with:
+        environment: prod
+        nodeVersion: 20
+        deployArgs: -c env=prod
+        AWSRoleToAssume: arn:aws:iam::355920665683:role/signet-gha-esi-oidc-role
+        inputArtifactDownloadName: prodBuild
