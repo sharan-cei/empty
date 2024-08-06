@@ -1,0 +1,174 @@
+name: Build Typescript Application
+
+# @description Build a typescript application
+# @notes
+# @example
+# buildTypescriptApp:
+#   uses: Signet-sd/CICD-Templates/.github/workflows/typescriptBuildApp.yml@main
+#   with:
+#     environment: dev
+#     outputArtifactPath: ./dist
+#     outputArtifactUploadName: devTypescriptApp
+#     installDependenciesCommand: 'npm ci'
+#     buildCommand: 'npm run build --if-present'
+#     testCommand: 'npm test'
+#   secrets:
+#     npmAuthToken: ${{ secrets.yourToken }}
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: which GH environment to use
+        type: string
+        required: true
+      workingDirectory:
+        type: string
+        default: "./"
+        description: "specify starting directory"
+
+      branch:
+        type: string
+        description: "branch/ref of repository to use"
+        default: ""
+        required: false
+
+      # versions
+      runsOn:
+        default: ubuntu-latest
+        description: Platform to execute on
+        type: string
+      nodeVersion:
+        default: 20.x
+        description: specify nodejs version
+        type: string
+
+      # AWS configuration
+      AWSRoleToAssume:
+        description: AWS role ARN to assume. Should have a corresponding trust policy
+        type: string
+      AWSRegion:
+        default: us-east-2
+        description: Which region to use in AWS. Signet standard is us-east-2
+        type: string
+      AWSRoleDurationSeconds:
+        default: "900"
+        description: How long your AWS role will be good. Must be between 900 and 43200 s
+        type: string
+      AWSRoleSessionName:
+        default: github-action-assumed-role
+        description: A "role session friendly name" to make deciphering logs easier
+        type: string
+      AWSMaskAccountId:
+        default: true
+        description: Whether to mask or not mask the AWS Account ID
+        type: boolean
+
+      # output artifacts
+      outputArtifactPath:
+        description: The path to the artifact to be uploaded. This is relative to github runner home, NOT the working directory
+        type: string
+      outputArtifactUploadName:
+        description: The name of the artifact to upload. Defaults to the name of the job using this
+        type: string
+      outputArtifactRetention:
+        default: "5"
+        description: How long in days to keep the github action artifact
+        type: string
+
+      # test artifacts
+      testArtifactPath:
+        description: The path to the artifact to be uploaded
+        type: string
+      testArtifactUploadName:
+        description: The name of the artifact to upload. Defaults to the name of the job using this
+        type: string
+      testArtifactRetention:
+        default: "5"
+        description: How long in days to keep the github action artifact
+        type: string
+
+      # flags
+      runTests:
+        default: false
+        description: Whether or not to run tests
+        type: boolean
+
+      # configurable commands
+      installCommand:
+        default: npm ci
+        description: command to run to install node dependencies
+        type: string
+      buildCommand:
+        default: npm run build --if-present
+        description: command to build
+        type: string
+      testCommand:
+        default: npm test
+        description: command to test
+        type: string
+
+    secrets:
+      npmAuthToken:
+        description: Token to pull common construct npm package from github registry
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runsOn }}
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.workingDirectory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        if: ${{ inputs.AWSRoleToAssume }}
+        with:
+          aws-region: ${{ inputs.AWSRegion }}
+          role-duration-seconds: ${{ inputs.AWSRoleDurationSeconds }}
+          role-session-name: ${{ inputs.AWSRoleSessionName }}
+          role-to-assume: ${{ inputs.AWSRoleToAssume }}
+          mask-aws-account-id: ${{ inputs.AWSMaskAccountId }}
+
+      - name: Setup Node JS
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ inputs.nodeVersion }}
+
+      - name: Install Dependencies
+        run: ${{ inputs.installCommand }}
+        env:
+          NPM_AUTH_TOKEN: ${{ secrets.npmAuthToken }}
+
+      - name: Build Application
+        run: ${{ inputs.buildCommand }}
+
+      - name: print Path
+        run: ls -R
+
+      - name: Run Tests
+        if: ${{ inputs.runTests }}
+        run: ${{ inputs.testCommand }}
+
+      - name: Upload Test Artifact
+        if: ${{ inputs.testArtifactPath }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ (inputs.testArtifactUploadName == '' && github.job ) || inputs.testArtifactUploadName }}
+          path: ${{ inputs.workingDirectory }}/${{ inputs.testArtifactPath }}
+          retention-days: ${{ inputs.testArtifactRetention }}
+          if-no-files-found: error
+
+      - name: Upload Artifact
+        if: ${{ inputs.outputArtifactPath }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ (inputs.outputArtifactUploadName == '' && github.job ) || inputs.outputArtifactUploadName }}
+          path: ${{ inputs.outputArtifactPath }}
+          retention-days: ${{ inputs.outputArtifactRetention }}
+          if-no-files-found: error

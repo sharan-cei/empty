@@ -1,0 +1,182 @@
+name: CDK TypeScript Workflow
+# @description run cdk with typescript dependencies installed
+# @example
+# on:
+#   push:
+#     branches:
+#       - main
+# jobs:
+#   worflow_call:
+#     uses: Signet-sd/CICD-Templates/.github/workflows/typescriptCDKBuild.yml@main
+#     with:
+#       outputArtifactUploadName: cdk.out
+#       outputArtifactRetention: 5
+#       environment: dev
+#       runTests: false
+#       workingDirectory: infrastructure/
+#     # AWS Configuration
+#       AWSMaskAccountId: true
+#     secrets:
+#       githubArtifactToken: ghp_thisshouldbegeneratedbygithub
+#       orcaSecurityApiToken: ${{ secrets.ORCA_SECURITY_API_TOKEN }}
+#       orcaProjectKey: ${{ secrets.ORCA_PROJECT_KEY }}
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: which GH environment to use
+        type: string
+      runsOn:
+        default: ubuntu-latest
+        description: Platform to execute on
+        type: string
+      workingDirectory:
+        type: string
+        default: "./cdk"
+        description: "specify directory where your cdk code lives"
+
+      branch:
+        type: string
+        description: "branch/ref of repository to use"
+        default: ""
+        required: false
+
+      # versions
+      cdkVersion:
+        default: 2.x
+        description: what version of aws cloud development kit to use
+        type: string
+      nodeVersion:
+        default: 20.x
+        description: what version of nodejs to use
+        type: string
+
+      # output artifacts
+      outputArtifactPath:
+        description: The path to the artifact to be uploaded. This is relative to github runner home, NOT the working directory
+        type: string
+      outputArtifactUploadName:
+        description: The name of the artifact to upload. Defaults to the name of the job using this
+        type: string
+      outputArtifactRetention:
+        default: "5"
+        description: How long in days to keep the github action artifact
+        type: string
+
+      # AWS configuration
+      AWSRoleToAssume:
+        description: AWS role ARN to assume. Should have a corresponding trust policy
+        type: string
+      AWSRegion:
+        default: us-east-2
+        description: Which region to use in AWS. Signet standard is us-east-2
+        type: string
+      AWSRoleDurationSeconds:
+        default: "900"
+        description: How long your AWS role will be good. Must be between 900 and 43200
+        type: string
+      AWSRoleSessionName:
+        default: github-action-assumed-role
+        description: A "role session friendly name" to make deciphering logs easier
+        type: string
+      AWSMaskAccountId:
+        default: true
+        description: Whether to mask or not mask the AWS Account ID
+        type: boolean
+
+      # flags
+      runTests:
+        default: false
+        description: Whether or not to run tests
+        type: boolean
+
+      # configurable commands
+      installCommand:
+        default: npm install
+        description: command to run to install dependencies
+        type: string
+      testCommand:
+        default: npm run test
+        description: command to run to test
+        type: string
+      synthCommand:
+        default: cdk synth --context environment=$ENVIRONMENT
+        description: command to run to test
+        type: string
+
+    secrets:
+      # Package repository
+      githubArtifactToken:
+        description: Token to pull common construct npm package from npm registry
+        required: false
+      orcaSecurityApiToken:
+        description: "Orca Security API Token"
+        required: true
+      orcaProjectKey:
+        description: "Orca Security Project Key"
+        required: true
+  
+jobs:
+  build:
+    runs-on: ${{ inputs.runsOn }}
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.workingDirectory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        if: ${{ inputs.AWSRoleToAssume }}
+        with:
+          aws-region: ${{ inputs.AWSRegion }}
+          role-duration-seconds: ${{ inputs.AWSRoleDurationSeconds }}
+          role-session-name: ${{ inputs.AWSRoleSessionName }}
+          role-to-assume: ${{ inputs.AWSRoleToAssume }}
+          mask-aws-account-id: ${{ inputs.AWSMaskAccountId }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ inputs.nodeVersion }}
+
+      - run: npm i -g aws-cdk@${{ inputs.cdkVersion }}
+        name: Install CDK
+
+      - name: Install dependencies
+        run: ${{ inputs.installCommand }}
+        env:
+          ARTIFACT_TOKEN: ${{ secrets.githubArtifactToken }}
+
+      - name: Run tests
+        if: ${{ inputs.runTests }}
+        run: ${{ inputs.testCommand }}
+
+      - run: ${{ inputs.synthCommand }}
+        name: CDK Synth
+        env:
+          GH_RUN_NUM: ${{ github.run_number }}
+          ENVIRONMENT: ${{ inputs.environment }}
+
+      - name: Run Orca IaC Scan
+        uses: orcasecurity/shiftleft-iac-action@v1
+        with:
+          api_token: ${{ secrets.orcaSecurityApiToken }}
+          project_key: ${{ secrets.orcaProjectKey }}
+          path:
+            "${{ inputs.workingDirectory }}/cdk.out/"
+      
+  
+      - name: Upload Artifact
+        if: ${{ inputs.outputArtifactPath }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ (inputs.outputArtifactUploadName == '' && github.job ) || inputs.outputArtifactUploadName }}
+          path: ${{ inputs.outputArtifactPath }}
+          retention-days: ${{ inputs.outputArtifactRetention }}
+          if-no-files-found: error

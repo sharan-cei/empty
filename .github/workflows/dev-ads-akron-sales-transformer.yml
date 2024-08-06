@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   buildTypescriptApp:
-    uses: Signet-sd/esi-devops/.github/workflows/typescriptBuildApp.yml@development
+    uses: ../common_workflows/typescriptCDKBuild.yml
     with:
       environment: dev
       workingDirectory: ads-akronSales-transformer
